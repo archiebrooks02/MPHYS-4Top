@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, roc_auc_score
 import argparse
 import yaml
-import optuna
 
 class Classifier_MLP(nn.Module):
 
@@ -36,7 +35,7 @@ class Classifier_MLP(nn.Module):
 
     def fit(self, train_loader, valid_loader, optimiser, verbose=True):
         _results = []  # Store training and validation metrics
-        epochs = load_yaml("dnn_parameters.yaml")["dnn_configuration"]["training"]["epochs"]
+        epochs = load_yaml("MPHYS-4Top/dnn_parameters.yaml")["dnn_configuration"]["training"]["epochs"]
         for epoch in range(epochs):
             # Training loop
             self.train()  # Set the model to training mode
@@ -186,16 +185,17 @@ def nn_splitting(X,y):
 
     return train_loader, valid_loader, X_test_variable, y_test_variable
 
-def NN_train(X,y):
+def NN_train(X,y,channel_type):
 
-    architecture = load_yaml("dnn_parameters.yaml")["dnn_configuration"]["architecture"]
-    input_dim = architecture["input_dim"]
+    architecture = load_yaml("MPHYS-4Top/dnn_parameters.yaml")["dnn_configuration"]["architecture"]
     output_dim = architecture["output_dim"]
     hidden_size_1 = architecture["hidden_1_size"]
     hidden_size_2 = architecture["hidden_2_size"]
     dropout_rate = architecture["dropout_rate"]
-    training = load_yaml("dnn_parameters.yaml")["dnn_configuration"]["training"]
+    training = load_yaml("MPHYS-4Top/dnn_parameters.yaml")["dnn_configuration"]["training"]
     learning_rate = training["learning_rate"]
+
+    input_dim=46 if channel_type == "combined" else 23
 
     NN_clf = Classifier_MLP(in_dim=input_dim, hidden_dim1 = hidden_size_1, hidden_dim2 = hidden_size_2, dropout_rate=dropout_rate, out_dim=output_dim)
     optimiser = torch.optim.Adam(NN_clf.parameters(),lr=learning_rate)
@@ -209,7 +209,7 @@ def NN_test(X,NN_clf):
 
     return y_pred, decisions_nn
 
-def NN_scores(NN_clf,X_train,y_train,X_test,y_test,y_test_variable, decisions_nn):
+def NN_scores(NN_clf,X_train,y_train,X_test,y_test,y_test_variable, decisions_nn,lepton_channel,variable_type):
     fpr_nn, tpr_nn, thresholds_nn = roc_curve(y_test_variable, decisions_nn)
     auc_nn = roc_auc_score(y_test_variable, decisions_nn)
 
@@ -223,12 +223,12 @@ def NN_scores(NN_clf,X_train,y_train,X_test,y_test,y_test_variable, decisions_nn
     ax[0].set_ylim(0,1)
     ax[0].legend(loc='lower right')
     compare_train_test(NN_clf, X_train,y_train,X_test,y_test, "Neural Network Output",ax)
-    plt.savefig("NN_outputs.png")
-    plt.show()
+    plt.savefig(f"MPHYS-4Top/NN_outputs/tm_{lepton_channel}_{variable_type}_outputs.png")
+
     print(auc_nn)
     return None
 
-def NN_losses(results):
+def NN_losses(results,lepton_channel,variable_type):
     epochs = results[:, 0] +1
     train_losses = results[:, 1]
     valid_losses = results[:, 2]
@@ -241,15 +241,15 @@ def NN_losses(results):
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
-    plt.savefig("NN_losses.png")
-    plt.show()
+    plt.savefig(f"MPHYS-4Top/NN_outputs/tm_{lepton_channel}_{variable_type}_loss.png")
+
 
 def load_data(train_file, test_file):
-    with h5py.File("Training_Testing_Split/"+train_file, 'r') as f:
+    with h5py.File("MPHYS-4Top/Training_Testing_Split/"+train_file, 'r') as f:
         x_train = f['INPUTS'][:]
         y_train = f['LABELS'][:]
 
-    with h5py.File("Training_Testing_Split/"+test_file, 'r') as f:
+    with h5py.File("MPHYS-4Top/Training_Testing_Split/"+test_file, 'r') as f:
         x_test = f['INPUTS'][:]
         y_test = f['LABELS'][:]
     
@@ -259,7 +259,7 @@ def load_yaml(filename):
     with open(filename, 'r') as file:
         return yaml.safe_load(file)
 
-def main(train_file,test_file):
+def main(train_file,test_file,lepton_channel,variable_type):
     X_train,y_train,X_test,y_test = load_data(train_file, test_file)
 
     scaler=StandardScaler()
@@ -280,7 +280,7 @@ def main(train_file,test_file):
     X_valid_variable, y_valid_variable = (X_train_variable[:validation_length],y_train_variable[:validation_length],)
     X_train_nn_variable, y_train_nn_variable = (X_train_variable[validation_length:],y_train_variable[validation_length:],)
 
-    batch_size = load_yaml("dnn_parameters.yaml")["dnn_configuration"]["training"]["batch_size"]
+    batch_size = load_yaml("MPHYS-4Top/dnn_parameters.yaml")["dnn_configuration"]["training"]["batch_size"]
 
     train_data = Data.TensorDataset(X_train_nn_variable,y_train_nn_variable)
     valid_data = Data.TensorDataset(X_valid_variable,y_valid_variable)
@@ -288,37 +288,22 @@ def main(train_file,test_file):
     valid_loader = Data.DataLoader(dataset=valid_data,batch_size=batch_size,shuffle=True)
 
     print("Training neural network...")
-    results,nn_clf = NN_train(train_loader,valid_loader)
+    results,nn_clf = NN_train(train_loader,valid_loader,variable_type)
     print("Training complete.")
 
     print("Testing neural network...")
     y_pred,decisions_nn = NN_test(X_test_variable,nn_clf)
     print("Testing complete.")
 
-    NN_scores(nn_clf,X_train_scaled,y_train,X_test_scaled,y_test,y_test_variable, decisions_nn)
-    NN_losses(results)
-
-def objective(trial):
-    X_train,y_train,X_test,y_test = load_data("train.h5", "test.h5")
-    train_loader, valid_loader, X_test_variable, y_test_variable = nn_splitting(X_train,y_train)
-    architecture = load_yaml("dnn_parameters.yaml")["dnn_configuration"]["architecture"]
-    input_dim = architecture["input_dim"]
-    output_dim = architecture["output_dim"]
-    hidden_size_1 = trial.suggest_int('hidden_size_1', 1, 100)
-    hidden_size_2 = trial.suggest_int('hidden_size_2', 1, 100)
-    dropout_rate = trial.suggest_float('dropout_rate', 0.0, 0.5)
-    learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1)
-    NN_clf = Classifier_MLP(in_dim=input_dim, hidden_dim1 = hidden_size_1, hidden_dim2 = hidden_size_2, dropout_rate=dropout_rate, out_dim=output_dim)
-    optimiser = torch.optim.Adam(NN_clf.parameters(),lr=learning_rate)
-
-    decisions_nn = (NN_clf(X_test_variable)[1][:,1].cpu().detach().numpy())
-    auc_nn = roc_auc_score(y_test_variable, decisions_nn)
-    return auc_nn
+    NN_scores(nn_clf,X_train_scaled,y_train,X_test_scaled,y_test,y_test_variable, decisions_nn,lepton_channel,variable_type)
+    NN_losses(results,lepton_channel,variable_type)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a DNN and plot training loss.")
-    parser.add_argument('--train_file', type=str, required=True, help='Path to the training data file')
-    parser.add_argument('--test_file', type=str, required=True, help='Path to the testing data file')
+    parser.add_argument('train_file', help='Path to the training data file')
+    parser.add_argument('test_file', help='Path to the testing data file')
+    parser.add_argument("lepton_channel", choices=["0L","1L"], help="Lepton channel to process (0L, 1L)")
+    parser.add_argument("variable_type", choices=["combined", "reco", "tops"], help="Type of data to process (combined, reco, or tops)")
     
     args = parser.parse_args()
-    main(args.train_file, args.test_file)
+    main(args.train_file, args.test_file,args.lepton_channel,args.variable_type)
