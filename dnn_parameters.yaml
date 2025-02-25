@@ -1,0 +1,10 @@
+dnn_configuration:
+  architecture: 
+    hidden_1_size: 113
+    hidden_2_size: 57
+    dropout_rate: 0.47005537142230236
+    output_dim: 2
+  training:
+    batch_size: 64
+    epochs: 30
+    learning_rate: 0.00013204316868629544
